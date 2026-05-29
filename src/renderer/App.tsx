@@ -5,6 +5,7 @@ import "./styles.css";
 
 const INITIAL_CENTER_US = 5_000_000;
 const WINDOW_US = 10_000_000;
+const MAX_ZOOM = WINDOW_US / 20;
 
 function App() {
   const [summary, setSummary] = useState<FileSummary | null>(null);
@@ -199,7 +200,7 @@ function WaveformCanvas({
       if (!currentWindow) return;
       const anchorUs = timeFromPoint(canvas, event.clientX, currentWindow);
       const factor = event.deltaY < 0 ? 1.35 : 1 / 1.35;
-      const nextZoom = Math.max(1, Math.min(64, currentWindow.zoom * factor));
+      const nextZoom = Math.max(1, Math.min(MAX_ZOOM, currentWindow.zoom * factor));
       onZoomRef.current(nextZoom, anchorUs);
     };
 
@@ -328,17 +329,56 @@ function drawChannel(
   baseline: number
 ) {
   const amp = height * 0.2;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (const point of points) {
-    const x = ((point.timeUs - startUs) / Math.max(1, endUs - startUs)) * width;
+  const values = points.map((point) => {
     const min = channel === "left" ? point.leftMin : point.rightMin;
     const max = channel === "left" ? point.leftMax : point.rightMax;
-    ctx.moveTo(x, baseline - max * amp);
-    ctx.lineTo(x, baseline - min * amp);
+    return {
+      x: ((point.timeUs - startUs) / Math.max(1, endUs - startUs)) * width,
+      y: baseline - ((min + max) / 2) * amp,
+      minY: baseline - max * amp,
+      maxY: baseline - min * amp
+    };
+  });
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.28;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const value of values) {
+    ctx.moveTo(value.x, value.minY);
+    ctx.lineTo(value.x, value.maxY);
   }
   ctx.stroke();
+
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  values.forEach((value, index) => {
+    if (index === 0) {
+      ctx.moveTo(value.x, value.y);
+    } else {
+      ctx.lineTo(value.x, value.y);
+    }
+  });
+  ctx.stroke();
+
+  const spacing = values.length > 1 ? Math.abs(values[1].x - values[0].x) : width;
+  if (spacing >= 6) {
+    ctx.fillStyle = color;
+    for (const value of values) {
+      ctx.beginPath();
+      ctx.arc(value.x, value.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
   ctx.fillStyle = "#aab4be";
   ctx.font = "12px system-ui";
   ctx.fillText(channel === "left" ? "L" : "R", 12, baseline - amp - 8);

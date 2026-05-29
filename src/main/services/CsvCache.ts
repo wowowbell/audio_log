@@ -52,7 +52,9 @@ const DEFAULT_FORMAT = "48kHz / 24-bit signed LE / stereo";
 const CHANNELS = 2;
 const BYTES_PER_SAMPLE = 3;
 const WINDOW_US = 10_000_000;
-const HALF_WINDOW_US = WINDOW_US / 2;
+const MIN_VISIBLE_US = 20;
+const MAX_ZOOM = WINDOW_US / MIN_VISIBLE_US;
+const PACKET_MARGIN_US = 250;
 
 export class CsvCache {
   private db: Database.Database;
@@ -116,15 +118,15 @@ export class CsvCache {
 
   loadWindow(fileId: number, centerUs: number, zoom: number): AudioWindow {
     const file = this.getFile(fileId);
-    const clampedZoom = Math.max(1, Math.min(64, zoom || 1));
-    const visibleUs = Math.max(50_000, WINDOW_US / clampedZoom);
+    const clampedZoom = Math.max(1, Math.min(MAX_ZOOM, zoom || 1));
+    const visibleUs = Math.max(MIN_VISIBLE_US, WINDOW_US / clampedZoom);
     const startUs = Math.max(0, Math.round(centerUs - visibleUs / 2));
     const endUs = Math.min(file.duration_us, Math.round(centerUs + visibleUs / 2));
-    const bucketUs = Math.max(20, Math.ceil((endUs - startUs) / 1200));
+    const bucketUs = Math.max(1, Math.ceil((endUs - startUs) / 2000));
 
     const packets = this.db.prepare(
       "SELECT time_us, endpoint, len_bytes, data_hex, first_frame, frame_count FROM audio_packets WHERE file_id = ? AND time_us BETWEEN ? AND ? ORDER BY time_us"
-    ).all(fileId, startUs, endUs) as AudioPacketRow[];
+    ).all(fileId, Math.max(0, startUs - PACKET_MARGIN_US), endUs + PACKET_MARGIN_US) as AudioPacketRow[];
 
     const points = buildAudioPoints(packets, bucketUs);
     const glitchIndex = this.glitchIndexAt(fileId, centerUs);
