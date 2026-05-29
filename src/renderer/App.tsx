@@ -167,6 +167,13 @@ function WaveformCanvas({
   onPick: (timeUs: number) => void;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const audioWindowRef = useRef<AudioWindow | null>(audioWindow);
+  const onZoomRef = useRef(onZoom);
+
+  useEffect(() => {
+    audioWindowRef.current = audioWindow;
+    onZoomRef.current = onZoom;
+  }, [audioWindow, onZoom]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -181,27 +188,37 @@ function WaveformCanvas({
     drawWaveform(ctx, rect.width, rect.height, audioWindow);
   }, [audioWindow]);
 
-  const timeFromEvent = (event: React.MouseEvent<HTMLCanvasElement> | React.WheelEvent<HTMLCanvasElement>) => {
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const currentWindow = audioWindowRef.current;
+      if (!currentWindow) return;
+      const anchorUs = timeFromPoint(canvas, event.clientX, currentWindow);
+      const factor = event.deltaY < 0 ? 1.35 : 1 / 1.35;
+      const nextZoom = Math.max(1, Math.min(64, currentWindow.zoom * factor));
+      onZoomRef.current(nextZoom, anchorUs);
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  const timeFromEvent = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!audioWindow) return 0;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    return audioWindow.startUs + ratio * (audioWindow.endUs - audioWindow.startUs);
+    return timeFromPoint(event.currentTarget, event.clientX, audioWindow);
   };
 
-  return (
-    <canvas
-      ref={ref}
-      className="waveform"
-      onClick={(event) => onPick(timeFromEvent(event))}
-      onWheel={(event) => {
-        event.preventDefault();
-        if (!audioWindow) return;
-        const anchorUs = timeFromEvent(event);
-        const factor = event.deltaY < 0 ? 1.35 : 1 / 1.35;
-        onZoom(Math.max(1, Math.min(64, audioWindow.zoom * factor)), anchorUs);
-      }}
-    />
-  );
+  return <canvas ref={ref} className="waveform" onClick={(event) => onPick(timeFromEvent(event))} />;
+}
+
+function timeFromPoint(canvas: HTMLCanvasElement, clientX: number, audioWindow: AudioWindow) {
+  const rect = canvas.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return audioWindow.startUs + ratio * (audioWindow.endUs - audioWindow.startUs);
 }
 
 function Timeline({
