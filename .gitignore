@@ -1,0 +1,8 @@
+node_modules/
+dist/
+samples/
+*.log
+.vite/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
