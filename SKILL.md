@@ -45,6 +45,8 @@ npx.cmd electron-rebuild -f -w better-sqlite3
 
 If Electron binary is incomplete, rerun Electron install or rebuild before changing app code.
 
+After every code change, commit the completed source changes to git with a clear message. Do not commit ignored generated artifacts such as `samples/`, `node_modules/`, `dist/`, or SQLite cache files.
+
 ## Parser And Cache Rules
 
 - Parse Total Phase CSV comments until the `# Level,Sp,Index,m:s.ms.us,...` header is found.
