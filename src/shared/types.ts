@@ -9,6 +9,7 @@ export type FileSummary = {
   audioPacketCount: number;
   glitchCount: number;
   detectedFormat: string;
+  cachePath: string;
   cacheHit: boolean;
 };
 

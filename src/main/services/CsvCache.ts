@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -32,6 +33,7 @@ type FileRecord = {
   audio_packet_count: number;
   glitch_count: number;
   detected_format: string;
+  cache_path: string;
 };
 
 type AudioPacketRow = {
@@ -58,10 +60,15 @@ const PACKET_MARGIN_US = 250;
 
 export class CsvCache {
   private db: Database.Database;
+  private cacheDir: string;
+  private currentCachePath: string;
 
   constructor(userDataDir: string) {
     fs.mkdirSync(userDataDir, { recursive: true });
-    this.db = new Database(path.join(userDataDir, "audio-log-cache.sqlite"));
+    this.cacheDir = path.join(userDataDir, "csv-cache");
+    fs.mkdirSync(this.cacheDir, { recursive: true });
+    this.currentCachePath = ":memory:";
+    this.db = new Database(this.currentCachePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.migrate();
@@ -69,6 +76,9 @@ export class CsvCache {
 
   async openCsv(filePath: string): Promise<FileSummary> {
     const stat = fs.statSync(filePath);
+    const cachePath = this.cachePathForCsv(filePath);
+    this.useDatabase(cachePath);
+
     const existing = this.db.prepare(
       "SELECT * FROM files WHERE path = ? AND size = ? AND mtime_ms = ?"
     ).get(filePath, stat.size, stat.mtimeMs) as FileRecord | undefined;
@@ -82,9 +92,9 @@ export class CsvCache {
     deleteOld();
 
     const insert = this.db.prepare(
-      "INSERT INTO files (path, name, size, mtime_ms, duration_us, row_count, audio_packet_count, glitch_count, detected_format) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)"
+      "INSERT INTO files (path, name, size, mtime_ms, duration_us, row_count, audio_packet_count, glitch_count, detected_format, cache_path) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?)"
     );
-    const info = insert.run(filePath, path.basename(filePath), stat.size, stat.mtimeMs, DEFAULT_FORMAT);
+    const info = insert.run(filePath, path.basename(filePath), stat.size, stat.mtimeMs, DEFAULT_FORMAT, cachePath);
     const fileId = Number(info.lastInsertRowid);
 
     await this.parseIntoCache(fileId, filePath);
@@ -216,7 +226,8 @@ export class CsvCache {
         row_count INTEGER NOT NULL,
         audio_packet_count INTEGER NOT NULL,
         glitch_count INTEGER NOT NULL,
-        detected_format TEXT NOT NULL
+        detected_format TEXT NOT NULL,
+        cache_path TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS files_lookup ON files(path, size, mtime_ms);
 
@@ -262,6 +273,7 @@ export class CsvCache {
       );
       CREATE INDEX IF NOT EXISTS glitches_time ON glitches(file_id, time_us);
     `);
+    this.ensureColumn("files", "cache_path", "TEXT NOT NULL DEFAULT ''");
   }
 
   private async parseIntoCache(fileId: number, filePath: string) {
@@ -344,8 +356,8 @@ export class CsvCache {
     this.rebuildGlitches(fileId);
     const glitchCount = (this.db.prepare("SELECT COUNT(*) AS count FROM glitches WHERE file_id = ?").get(fileId) as { count: number }).count;
     this.db.prepare(
-      "UPDATE files SET duration_us = ?, row_count = ?, audio_packet_count = ?, glitch_count = ?, detected_format = ? WHERE id = ?"
-    ).run(durationUs, rowCount, audioCount, glitchCount, DEFAULT_FORMAT, fileId);
+      "UPDATE files SET duration_us = ?, row_count = ?, audio_packet_count = ?, glitch_count = ?, detected_format = ?, cache_path = ? WHERE id = ?"
+    ).run(durationUs, rowCount, audioCount, glitchCount, DEFAULT_FORMAT, this.currentCachePath, fileId);
   }
 
   private rebuildGlitches(fileId: number) {
@@ -389,6 +401,30 @@ export class CsvCache {
     const file = this.db.prepare("SELECT * FROM files WHERE id = ?").get(fileId) as FileRecord | undefined;
     if (!file) throw new Error(`Unknown file id: ${fileId}`);
     return file;
+  }
+
+  private useDatabase(cachePath: string) {
+    if (this.currentCachePath === cachePath) return;
+    this.db.close();
+    this.currentCachePath = cachePath;
+    this.db = new Database(cachePath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.migrate();
+  }
+
+  private cachePathForCsv(filePath: string) {
+    const parsed = path.parse(filePath);
+    const safeName = parsed.name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "csv";
+    const hash = crypto.createHash("sha1").update(path.resolve(filePath).toLowerCase()).digest("hex").slice(0, 12);
+    return path.join(this.cacheDir, `${safeName}--${hash}.sqlite`);
+  }
+
+  private ensureColumn(table: string, column: string, definition: string) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!columns.some((entry) => entry.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   private glitchIndexAt(fileId: number, timeUs: number) {
@@ -456,6 +492,7 @@ function toSummary(record: FileRecord, cacheHit: boolean): FileSummary {
     audioPacketCount: record.audio_packet_count,
     glitchCount: record.glitch_count,
     detectedFormat: record.detected_format,
+    cachePath: record.cache_path,
     cacheHit
   };
 }

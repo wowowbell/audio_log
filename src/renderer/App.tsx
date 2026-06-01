@@ -133,7 +133,8 @@ function SummaryPanel({ summary }: { summary: FileSummary | null }) {
         ["Audio packets", summary.audioPacketCount.toLocaleString()],
         ["PCM", summary.detectedFormat],
         ["Glitches", summary.glitchCount.toLocaleString()],
-        ["Cache", summary.cacheHit ? "Hit" : "Built"]
+        ["Cache", summary.cacheHit ? "Hit" : "Built"],
+        ["Cache file", basename(summary.cachePath)]
       ]
     : [
         ["File", "-"],
@@ -446,6 +447,10 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   const mb = bytes / 1024 / 1024;
   return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+}
+
+function basename(filePath: string) {
+  return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 function formatTime(us: number) {
